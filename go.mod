@@ -1,4 +1,4 @@
-module github.com/infobloxopen/terraform-provider-infoblox
+module github.com/marifwicaksana/terraform-provider-infoblox
 
 go 1.21
 
