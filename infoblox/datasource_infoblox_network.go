@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"net"
+	"strconv"
+	"time"
+
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	ibclient "github.com/infobloxopen/infoblox-go-client/v2"
-	"strconv"
-	"time"
 )
 
 func dataSourceNetwork() *schema.Resource {
@@ -48,6 +51,16 @@ func dataSourceNetwork() *schema.Resource {
 							Type:        schema.TypeString,
 							Computed:    true,
 							Description: "The Extensible attributes for network datasource, as a map in JSON format",
+						},
+						"utilization": {
+							Type:        schema.TypeInt,
+							Computed:    true,
+							Description: "The percentage based on the IP addresses in use divided by the total addresses in the network",
+						},
+						"est_available_ip": {
+							Type:        schema.TypeInt,
+							Computed:    true,
+							Description: "Total unused IP addresses in the network.",
 						},
 					},
 				},
@@ -115,10 +128,12 @@ func flattenIpv4Network(network ibclient.Ipv4Network) (map[string]interface{}, e
 		"id":           network.Ref,
 		"network_view": network.NetworkView,
 		"ext_attrs":    string(ea),
+		"utilization":  network.Utilization,
 	}
 
 	if network.Network != nil {
 		res["cidr"] = *network.Network
+		res["est_available_ip"] = calculateAvailableIPv4s(network.Network, network.Utilization)
 	}
 
 	if network.Comment != nil {
@@ -144,10 +159,12 @@ func flattenIpv6Network(network ibclient.Ipv6Network) (map[string]interface{}, e
 		"id":           network.Ref,
 		"network_view": network.NetworkView,
 		"ext_attrs":    string(ea),
+		"utilization":  -1, // To standardize with IPv4 output
 	}
 
 	if network.Network != nil {
 		res["cidr"] = *network.Network
+		res["est_available_ip"] = -1 // To standardize with IPv4 output
 	}
 
 	if network.Comment != nil {
@@ -155,6 +172,24 @@ func flattenIpv6Network(network ibclient.Ipv6Network) (map[string]interface{}, e
 	}
 
 	return res, nil
+}
+
+func calculateAvailableIPv4s(network *string, utilization uint32) uint32 {
+	_, ipV4Net, err := net.ParseCIDR(*network)
+	if err != nil {
+		return 0
+	}
+	maskSize, _ := ipV4Net.Mask.Size()
+
+	totalIPs := uint32(math.Pow(2, float64(32-maskSize))) - 2
+
+	if totalIPs < 0 { // /31 or /32
+		totalIPs = 0
+	}
+
+	availableIPs := uint32((utilization / 1000) * totalIPs)
+
+	return availableIPs
 }
 
 func dataSourceIPv6NetworkRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
